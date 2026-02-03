@@ -38,9 +38,19 @@ A Go-based, censorship-aware health monitoring and traffic control system design
 ### 1. Build Both Binaries
 
 ```bash
+# Development build
 go build -o irmon ./cmd/irmon
 go build -o irmon-agent ./cmd/irmon-agent
+
+# Production build (smaller binaries, ~40% size reduction)
+go build -ldflags="-s -w" -o irmon ./cmd/irmon
+go build -ldflags="-s -w" -o irmon-agent ./cmd/irmon-agent
 ```
+
+| Binary        | Dev Build | Production Build |
+| ------------- | --------- | ---------------- |
+| `irmon`       | 14MB      | 9.8MB            |
+| `irmon-agent` | 9.4MB     | 6.5MB            |
 
 ### 2. Deploy irmon-agent on Iranian Servers
 

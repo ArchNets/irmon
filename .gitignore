@@ -1,0 +1,29 @@
+# Binaries
+irmon
+irmon-agent
+irmon-*
+*.exe
+
+# Build artifacts
+dist/
+release/
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test
+coverage.out
+coverage.html
