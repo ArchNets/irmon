@@ -437,12 +437,13 @@ func updateBinary() {
 	fmt.Println("Restarting menu with new version...")
 	time.Sleep(1 * time.Second)
 
-	// Re-exec to load new binary
-	execPath, err := os.Executable()
+	// Re-exec the NEW binary (must use binaryPath, not os.Executable which is the old one)
+	err = syscall.Exec(binaryPath, []string{binaryPath}, os.Environ())
 	if err != nil {
-		execPath = binaryPath
+		fmt.Printf("Failed to restart: %v\n", err)
+		fmt.Println("Please run 'irmon-agent' again to see the new version.")
+		pressEnterToContinue()
 	}
-	syscall.Exec(execPath, []string{execPath}, os.Environ())
 }
 
 func installService() {
