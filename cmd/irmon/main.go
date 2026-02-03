@@ -158,7 +158,7 @@ func clearScreen() {
 
 func printHeader() {
 	fmt.Println("╔═══════════════════════════════════════════════════════════╗")
-	fmt.Printf("║        irmon - Health Monitoring System  v%-15s║\n", version)
+	fmt.Printf("║        irmon - Health Monitoring System  %-16s║\n", version)
 	fmt.Println("╠═══════════════════════════════════════════════════════════╣")
 }
 
@@ -280,11 +280,21 @@ func viewLogs() {
 	cmd.Run()
 }
 
-func editConfig() {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "nano"
+// getEditor returns the preferred editor (vim > nano) or EDITOR env var
+func getEditor() string {
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		return editor
 	}
+	// Check if vim is available
+	if _, err := exec.LookPath("vim"); err == nil {
+		return "vim"
+	}
+	// Fallback to nano
+	return "nano"
+}
+
+func editConfig() {
+	editor := getEditor()
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		fmt.Printf("\nConfig file not found: %s\n", configFile)
 		fmt.Println("Run 'Install service' first to create the config file.")
@@ -299,10 +309,7 @@ func editConfig() {
 }
 
 func editCredentials() {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "nano"
-	}
+	editor := getEditor()
 	if _, err := os.Stat(envFile); os.IsNotExist(err) {
 		fmt.Printf("\nCredentials file not found: %s\n", envFile)
 		fmt.Println("Run 'Install service' first to create the credentials file.")

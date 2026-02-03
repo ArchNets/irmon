@@ -121,7 +121,7 @@ func clearScreen() {
 
 func printHeader() {
 	fmt.Println("╔═══════════════════════════════════════════════════════════╗")
-	fmt.Printf("║      irmon-agent - Health Check Endpoint  v%-14s║\n", version)
+	fmt.Printf("║      irmon-agent - Health Check Endpoint  %-15s║\n", version)
 	fmt.Println("╠═══════════════════════════════════════════════════════════╣")
 }
 
