@@ -35,7 +35,23 @@ A Go-based, censorship-aware health monitoring and traffic control system design
 
 ## Quick Start
 
-### 1. Build Both Binaries
+### Option 1: One-Click Install (Recommended)
+
+**On Iranian servers (agent):**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ArchNets/irmon/master/install-agent.sh | sudo bash
+```
+
+**On non-Iranian server (monitor):**
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ArchNets/irmon/master/install.sh | sudo bash
+```
+
+---
+
+### Option 2: Manual Build
 
 ```bash
 # Development build
