@@ -1,0 +1,49 @@
+[Unit]
+Description=Iran-Aware Health Monitoring System (irmon)
+Documentation=https://github.com/archnet/irmon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=irmon
+Group=irmon
+ExecStart=/usr/local/bin/irmon -config /etc/irmon/config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=irmon
+
+# Environment file for secrets (optional)
+EnvironmentFile=-/etc/irmon/env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Allow writing to log directory
+ReadWritePaths=/var/log/irmon
+
+# Required for ICMP ping functionality
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# Network access
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Watchdog (optional)
+WatchdogSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,158 @@
+# irmon Configuration Example
+# Iran-Aware Health Monitoring System
+
+#==============================================================================
+# Check Configuration
+#==============================================================================
+check_config:
+  # How often to run health checks
+  interval: 30s
+
+  # Default timeout for protocol checks
+  timeout: 10s
+
+  # Number of consecutive failures before marking server as degraded/iran-only
+  failure_threshold: 3
+
+  # Number of consecutive successes before recovering a server
+  recovery_threshold: 2
+
+  # Cooldown period after state change (anti-flapping)
+  flapping_window: 5m
+
+#==============================================================================
+# Scoring Configuration
+#==============================================================================
+scoring:
+  # Weight assigned to each protocol when calculating total score
+  # Higher weight = more important for health determination
+  weights:
+    wssmux: 100 # CRITICAL - Primary transport for DPI bypass
+    xwssmux: 80 # CRITICAL - Extended mux transport
+    wss: 60 # Important - Secure WebSocket
+    ws: 40 # Important - Plain WebSocket
+    tcp: 20 # INFORMATIONAL - Raw TCP (often blocked)
+    icmp: 5 # INFORMATIONAL - Ping (often blocked)
+
+  # Score thresholds for state determination
+  thresholds:
+    fully_usable: 60 # Score >= 60 means server is fully usable
+    degraded: 20 # Score >= 20 means degraded, < 20 means Iran-only
+
+#==============================================================================
+# Cloudflare Configuration
+#==============================================================================
+cloudflare:
+  # API token with Load Balancer edit permissions
+  # Recommended: Use environment variable ${CF_API_TOKEN}
+  api_token: "${CF_API_TOKEN}"
+
+  # Cloudflare account ID
+  account_id: "${CF_ACCOUNT_ID}"
+
+  # Load balancer pool ID to manage
+  pool_id: "${CF_POOL_ID}"
+
+  # Rate limit for API calls (requests per second)
+  rate_limit: 5
+
+  # DNS TTL in seconds (lower = faster failover)
+  ttl: 30
+
+#==============================================================================
+# Server Configuration
+#==============================================================================
+servers:
+  # Iran Server 1
+  - name: "iran-server-1"
+    # Public IP used in Cloudflare origin
+    origin_ip: "185.1.2.3"
+    # Overlay tunnel IP (optional, for internal tracking)
+    tunnel_ip: "40.1.1.1"
+
+    protocols:
+      # WSSMUX - CRITICAL priority
+      - type: wssmux
+        endpoint: "wss://tunnel1.example.com:443/wssmux"
+        timeout: 5000 # 5 seconds
+
+      # XWSSMUX - High priority
+      - type: xwssmux
+        endpoint: "wss://tunnel1.example.com:443/xwssmux"
+        timeout: 5000
+
+      # WSS - Standard secure WebSocket
+      - type: wss
+        endpoint: "wss://tunnel1.example.com:443/health"
+        timeout: 5000
+
+      # WS - Plain WebSocket (fallback)
+      - type: ws
+        endpoint: "ws://tunnel1.example.com:80/health"
+        timeout: 5000
+
+      # TCP - Informational only
+      - type: tcp
+        endpoint: "185.1.2.3:443"
+        timeout: 3000
+
+      # ICMP - Informational only
+      - type: icmp
+        endpoint: "185.1.2.3"
+        timeout: 3000
+
+  # Iran Server 2
+  - name: "iran-server-2"
+    origin_ip: "185.4.5.6"
+    tunnel_ip: "40.1.2.1"
+
+    protocols:
+      - type: wssmux
+        endpoint: "wss://tunnel2.example.com:443/wssmux"
+        timeout: 5000
+
+      - type: xwssmux
+        endpoint: "wss://tunnel2.example.com:443/xwssmux"
+        timeout: 5000
+
+      - type: wss
+        endpoint: "wss://tunnel2.example.com:443/health"
+        timeout: 5000
+
+      - type: ws
+        endpoint: "ws://tunnel2.example.com:80/health"
+        timeout: 5000
+
+      - type: tcp
+        endpoint: "185.4.5.6:443"
+        timeout: 3000
+
+      - type: icmp
+        endpoint: "185.4.5.6"
+        timeout: 3000
+
+#==============================================================================
+# Logging Configuration
+#==============================================================================
+logging:
+  # Output format: "json" or "text"
+  format: json
+
+  # Log level: "debug", "info", "warn", "error"
+  level: info
+
+  # Output destination: "stdout" or file path
+  output: stdout
+
+#==============================================================================
+# Metrics Configuration (Prometheus)
+#==============================================================================
+metrics:
+  # Enable Prometheus metrics endpoint
+  enabled: true
+
+  # Address to listen on
+  address: ":9090"
+
+  # Path for metrics endpoint
+  path: /metrics

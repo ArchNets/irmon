@@ -1,0 +1,28 @@
+[Unit]
+Description=irmon Agent - Health Check Endpoint
+Documentation=https://github.com/archnets/irmon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/irmon-agent -listen ${LISTEN_ADDRS}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=irmon-agent
+
+# Default: listen on all interfaces
+Environment=LISTEN_ADDRS=0.0.0.0:8080
+
+# Example: Multiple tunnel IPs (comma-separated)
+# Environment=LISTEN_ADDRS=30.7.0.1:8080,30.8.0.1:8080
+
+# Example: With TLS
+# Environment=LISTEN_ADDRS=30.7.0.1:443,30.8.0.1:443
+# ExecStart=/usr/local/bin/irmon-agent -listen ${LISTEN_ADDRS} -cert /etc/irmon/cert.pem -key /etc/irmon/key.pem
+
+[Install]
+WantedBy=multi-user.target
