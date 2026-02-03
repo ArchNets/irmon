@@ -144,7 +144,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/${BINARY} -config ${CONFIG_DIR}/config.yaml
+ExecStart=${INSTALL_DIR}/${BINARY} run -config ${CONFIG_DIR}/config.yaml
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -168,10 +168,10 @@ echo "  2. Add Cloudflare credentials: nano ${CONFIG_DIR}/env"
 echo "  3. Start service: systemctl start irmon"
 echo ""
 echo -e "${YELLOW}Commands:${NC}"
+echo "  Menu:          ${BINARY}  (interactive management)"
 echo "  Start:         systemctl start irmon"
 echo "  Enable:        systemctl enable irmon"
 echo "  View logs:     journalctl -u irmon -f"
 echo "  Status:        systemctl status irmon"
-echo "  Uninstall:     systemctl disable irmon && rm ${INSTALL_DIR}/${BINARY} ${SERVICE_FILE}"
 echo ""
 echo -e "${GREEN}Metrics available at:${NC} http://localhost:9090/metrics"

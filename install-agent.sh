@@ -79,7 +79,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-ExecStart=${INSTALL_DIR}/${BINARY} -listen ${LISTEN_ADDRS}
+ExecStart=${INSTALL_DIR}/${BINARY} run -listen ${LISTEN_ADDRS}
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -106,10 +106,10 @@ echo ""
 echo -e "${GREEN}Listening on:${NC} ${LISTEN_ADDRS}"
 echo ""
 echo -e "${YELLOW}Commands:${NC}"
+echo "  Menu:          ${BINARY}  (interactive management)"
 echo "  View logs:     journalctl -u irmon-agent -f"
 echo "  Restart:       systemctl restart irmon-agent"
 echo "  Stop:          systemctl stop irmon-agent"
-echo "  Uninstall:     systemctl disable irmon-agent && rm ${INSTALL_DIR}/${BINARY} ${SERVICE_FILE}"
 echo ""
 echo -e "${GREEN}Test the health endpoint:${NC}"
 for addr in $(echo $LISTEN_ADDRS | tr ',' ' '); do
