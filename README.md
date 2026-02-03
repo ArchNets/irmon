@@ -2,6 +2,8 @@
 
 A Go-based, censorship-aware health monitoring and traffic control system designed specifically for Iranian network conditions.
 
+> **Note:** This project is primarily developed for [ArchNet](https://github.com/ArchNets) infrastructure.
+
 ## Two Components
 
 | Binary        | Runs On            | Purpose                                      |

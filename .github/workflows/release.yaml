@@ -56,19 +56,21 @@ jobs:
             | `irmon-agent-linux-amd64` | Linux x86_64 | Agent (runs on Iranian servers) |
             | `irmon-agent-linux-arm64` | Linux ARM64 | Agent (runs on Iranian servers) |
 
-            ### Installation
+            ### Installation & Update
 
+            Run the one-click installer (also works for updating to this version):
+
+            **On Iranian servers (agent):**
             ```bash
-            # On non-Iranian server (monitor)
-            wget https://github.com/ArchNets/irmon/releases/download/${{ steps.version.outputs.VERSION }}/irmon-linux-amd64
-            chmod +x irmon-linux-amd64
-            mv irmon-linux-amd64 /usr/local/bin/irmon
-
-            # On Iranian servers (agent)
-            wget https://github.com/ArchNets/irmon/releases/download/${{ steps.version.outputs.VERSION }}/irmon-agent-linux-amd64
-            chmod +x irmon-agent-linux-amd64
-            mv irmon-agent-linux-amd64 /usr/local/bin/irmon-agent
+            curl -sSL https://raw.githubusercontent.com/ArchNets/irmon/master/install-agent.sh | sudo bash
             ```
+
+            **On non-Iranian server (monitor):**
+            ```bash
+            curl -sSL https://raw.githubusercontent.com/ArchNets/irmon/master/install.sh | sudo bash
+            ```
+
+            > **Tip:** To update, simply run the same install command again. It will download the latest version.
           files: |
             irmon-linux-amd64
             irmon-linux-arm64
