@@ -434,8 +434,15 @@ func updateBinary() {
 	}
 
 	fmt.Printf("\n✓ Updated to %s\n", latest)
-	fmt.Println("Please restart the menu to see the new version.")
-	pressEnterToContinue()
+	fmt.Println("Restarting menu with new version...")
+	time.Sleep(1 * time.Second)
+
+	// Re-exec to load new binary
+	execPath, err := os.Executable()
+	if err != nil {
+		execPath = binaryPath
+	}
+	syscall.Exec(execPath, []string{execPath}, os.Environ())
 }
 
 func installService() {
