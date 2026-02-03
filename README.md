@@ -76,22 +76,12 @@ go build -ldflags="-s -w" -o irmon-agent ./cmd/irmon-agent
 # Copy binary to each Iranian server
 scp irmon-agent iran-server-1:/usr/local/bin/
 
-# On each Iranian server, run:
-irmon-agent -listen 40.1.1.1:8080   # Use the tunnel IP
-```
+# On each Iranian server, run the interactive menu:
+irmon-agent
+# Then select "Install/Reinstall service" and enter your listen addresses
 
-Or install as a service:
-
-```bash
-# Copy service file
-sudo cp irmon-agent.service /etc/systemd/system/
-
-# Edit and set the correct LISTEN_ADDR
-sudo systemctl edit irmon-agent
-# Add: Environment=LISTEN_ADDR=40.1.1.1:8080
-
-# Enable and start
-sudo systemctl enable --now irmon-agent
+# Or run directly:
+irmon-agent run -listen "30.7.0.1:8080,30.8.0.1:8080"
 ```
 
 ### 3. Configure irmon on Non-Iranian Server
@@ -159,12 +149,33 @@ metrics:
 ### 4. Run irmon
 
 ```bash
-export CF_API_TOKEN="your-token"
-export CF_ACCOUNT_ID="your-account-id"
-export CF_POOL_ID="your-pool-id"
+# Option A: Use the interactive menu
+irmon
+# Then select "Install/Reinstall service" and configure
 
-./irmon -config /etc/irmon/config.yaml
+# Option B: Run directly
+./irmon run -config /etc/irmon/config.yaml
 ```
+
+---
+
+## Interactive Menu
+
+Both binaries include an interactive management menu. Just run without arguments:
+
+```bash
+irmon          # On non-Iranian server
+irmon-agent    # On Iranian servers
+```
+
+**Menu options include:**
+
+- Start/Stop/Restart service
+- View logs
+- Edit config / credentials
+- Check for updates
+- Update binary (downloads latest from GitHub)
+- Install/Uninstall service
 
 ---
 
