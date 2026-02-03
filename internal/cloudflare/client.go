@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -21,22 +21,21 @@ const (
 type Client struct {
 	apiToken    string
 	accountID   string
-	poolID      string
+	zoneID      string
+	dnsName     string
+	ttl         int
 	httpClient  *http.Client
 	rateLimiter *rate.Limiter
-	mu          sync.Mutex
-
-	// Cache to avoid unnecessary updates
-	originWeights map[string]int
-	lastUpdate    map[string]time.Time
 }
 
 // Config holds client configuration
 type Config struct {
 	APIToken  string
 	AccountID string
-	PoolID    string
+	ZoneID    string
+	DNSName   string
 	RateLimit int // requests per second
+	TTL       int // DNS TTL in seconds
 }
 
 // NewClient creates a new Cloudflare API client
@@ -45,34 +44,30 @@ func NewClient(cfg Config) *Client {
 	if rateLimit <= 0 {
 		rateLimit = 5
 	}
+	ttl := cfg.TTL
+	if ttl <= 0 {
+		ttl = 60 // Default to 1 minute to avoid caching bad IPs too long
+	}
 
 	return &Client{
-		apiToken:      cfg.APIToken,
-		accountID:     cfg.AccountID,
-		poolID:        cfg.PoolID,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		rateLimiter:   rate.NewLimiter(rate.Limit(rateLimit), 1),
-		originWeights: make(map[string]int),
-		lastUpdate:    make(map[string]time.Time),
+		apiToken:    cfg.APIToken,
+		accountID:   cfg.AccountID,
+		zoneID:      cfg.ZoneID,
+		dnsName:     cfg.DNSName,
+		ttl:         ttl,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		rateLimiter: rate.NewLimiter(rate.Limit(rateLimit), 1),
 	}
 }
 
-// Origin represents a Cloudflare load balancer origin
-type Origin struct {
-	Name    string              `json:"name"`
-	Address string              `json:"address"`
-	Enabled bool                `json:"enabled"`
-	Weight  float64             `json:"weight"`
-	Header  map[string][]string `json:"header,omitempty"`
-}
-
-// Pool represents a Cloudflare load balancer pool
-type Pool struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Enabled     bool     `json:"enabled"`
-	Origins     []Origin `json:"origins"`
+// DNSRecord represents a Cloudflare DNS record
+type DNSRecord struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	TTL     int    `json:"ttl"`
+	Proxied bool   `json:"proxied"`
 }
 
 // APIResponse represents a Cloudflare API response
@@ -89,14 +84,13 @@ type APIError struct {
 	Message string `json:"message"`
 }
 
-// GetPool retrieves the current pool configuration
-func (c *Client) GetPool(ctx context.Context) (*Pool, error) {
-	// Wait for rate limiter
+// GetDNSRecords retrieves all A and AAAA records for the configured DNS name
+func (c *Client) GetDNSRecords(ctx context.Context) ([]DNSRecord, error) {
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limit wait: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/accounts/%s/load_balancers/pools/%s", apiBaseURL, c.accountID, c.poolID)
+	url := fmt.Sprintf("%s/zones/%s/dns_records?name=%s", apiBaseURL, c.zoneID, c.dnsName)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -126,92 +120,49 @@ func (c *Client) GetPool(ctx context.Context) (*Pool, error) {
 		return nil, fmt.Errorf("API error: %v", apiResp.Errors)
 	}
 
-	var pool Pool
-	if err := json.Unmarshal(apiResp.Result, &pool); err != nil {
-		return nil, fmt.Errorf("parsing pool: %w", err)
+	var records []DNSRecord
+	if err := json.Unmarshal(apiResp.Result, &records); err != nil {
+		return nil, fmt.Errorf("parsing records: %w", err)
 	}
 
-	return &pool, nil
-}
-
-// UpdateOriginWeight updates the weight for a specific origin IP
-// This is idempotent - it won't make API calls if the weight hasn't changed
-func (c *Client) UpdateOriginWeight(ctx context.Context, originIP string, weight int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Check if weight has changed
-	if currentWeight, ok := c.originWeights[originIP]; ok {
-		if currentWeight == weight {
-			return nil // No change needed
+	// Filter for A and AAAA records only
+	var filtered []DNSRecord
+	for _, r := range records {
+		if r.Type == "A" || r.Type == "AAAA" {
+			filtered = append(filtered, r)
 		}
 	}
 
-	// Get current pool configuration
-	pool, err := c.GetPool(ctx)
-	if err != nil {
-		return fmt.Errorf("getting pool: %w", err)
-	}
-
-	// Find and update the origin
-	found := false
-	for i, origin := range pool.Origins {
-		if origin.Address == originIP {
-			found = true
-			// Calculate normalized weight (Cloudflare uses 0.0-1.0)
-			normalizedWeight := float64(weight) / 100.0
-			if normalizedWeight < 0 {
-				normalizedWeight = 0
-			}
-			if normalizedWeight > 1 {
-				normalizedWeight = 1
-			}
-
-			pool.Origins[i].Weight = normalizedWeight
-			// Disable if weight is 0, otherwise enable
-			pool.Origins[i].Enabled = weight > 0
-			break
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("origin %s not found in pool", originIP)
-	}
-
-	// Update the pool
-	if err := c.updatePool(ctx, pool); err != nil {
-		return err
-	}
-
-	// Update cache
-	c.originWeights[originIP] = weight
-	c.lastUpdate[originIP] = time.Now()
-
-	return nil
+	return filtered, nil
 }
 
-// updatePool sends the updated pool configuration to Cloudflare
-func (c *Client) updatePool(ctx context.Context, pool *Pool) error {
-	// Wait for rate limiter
+// CreateDNSRecord creates a new DNS record
+func (c *Client) CreateDNSRecord(ctx context.Context, ip string) error {
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return fmt.Errorf("rate limit wait: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/accounts/%s/load_balancers/pools/%s", apiBaseURL, c.accountID, c.poolID)
-
-	// Only send origins field to update
-	updateBody := struct {
-		Origins []Origin `json:"origins"`
-	}{
-		Origins: pool.Origins,
+	recordType := "A"
+	if net.ParseIP(ip).To4() == nil {
+		recordType = "AAAA"
 	}
 
-	jsonBody, err := json.Marshal(updateBody)
+	record := DNSRecord{
+		Type:    recordType,
+		Name:    c.dnsName,
+		Content: ip,
+		TTL:     c.ttl,
+		Proxied: false, // DNS Load Balancing usually uses unproxied records (DNS only)
+	}
+
+	jsonBody, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("marshaling body: %w", err)
+		return fmt.Errorf("marshaling record: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewReader(jsonBody))
+	url := fmt.Sprintf("%s/zones/%s/dns_records", apiBaseURL, c.zoneID)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -242,108 +193,82 @@ func (c *Client) updatePool(ctx context.Context, pool *Pool) error {
 	return nil
 }
 
-// DisableOrigin sets an origin's weight to 0 and disables it
-// IMPORTANT: This does NOT delete the origin
-func (c *Client) DisableOrigin(ctx context.Context, originIP string) error {
-	return c.UpdateOriginWeight(ctx, originIP, 0)
-}
-
-// EnableOrigin re-enables an origin with the specified weight
-func (c *Client) EnableOrigin(ctx context.Context, originIP string, weight int) error {
-	if weight <= 0 {
-		weight = 50 // Default to 50% if no weight specified
-	}
-	return c.UpdateOriginWeight(ctx, originIP, weight)
-}
-
-// BatchUpdateOrigins updates multiple origins in a single API call
-func (c *Client) BatchUpdateOrigins(ctx context.Context, weights map[string]int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Check if any weight has changed
-	hasChanges := false
-	for ip, weight := range weights {
-		if currentWeight, ok := c.originWeights[ip]; !ok || currentWeight != weight {
-			hasChanges = true
-			break
-		}
+// DeleteDNSRecord deletes a DNS record by ID
+func (c *Client) DeleteDNSRecord(ctx context.Context, id string) error {
+	if err := c.rateLimiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limit wait: %w", err)
 	}
 
-	if !hasChanges {
-		return nil // No changes needed
-	}
+	url := fmt.Sprintf("%s/zones/%s/dns_records/%s", apiBaseURL, c.zoneID, id)
 
-	// Get current pool configuration
-	pool, err := c.GetPool(ctx)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
 	if err != nil {
-		return fmt.Errorf("getting pool: %w", err)
+		return fmt.Errorf("creating request: %w", err)
 	}
 
-	// Update all matching origins
-	for i, origin := range pool.Origins {
-		if weight, ok := weights[origin.Address]; ok {
-			normalizedWeight := float64(weight) / 100.0
-			if normalizedWeight < 0 {
-				normalizedWeight = 0
-			}
-			if normalizedWeight > 1 {
-				normalizedWeight = 1
-			}
+	req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	req.Header.Set("Content-Type", "application/json")
 
-			pool.Origins[i].Weight = normalizedWeight
-			pool.Origins[i].Enabled = weight > 0
-		}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
 	}
+	defer resp.Body.Close()
 
-	// Update the pool
-	if err := c.updatePool(ctx, pool); err != nil {
-		return err
-	}
-
-	// Update cache
-	now := time.Now()
-	for ip, weight := range weights {
-		c.originWeights[ip] = weight
-		c.lastUpdate[ip] = now
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	return nil
 }
 
-// GetCachedWeight returns the last known weight for an origin
-func (c *Client) GetCachedWeight(originIP string) (int, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	weight, ok := c.originWeights[originIP]
-	return weight, ok
-}
-
-// GetLastUpdate returns when an origin was last updated
-func (c *Client) GetLastUpdate(originIP string) (time.Time, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	t, ok := c.lastUpdate[originIP]
-	return t, ok
-}
-
-// RefreshCache fetches the current pool state and updates the local cache
-func (c *Client) RefreshCache(ctx context.Context) error {
-	pool, err := c.GetPool(ctx)
+// SyncDNS ensures that the DNS records for the domain match exactly the list of desired IPs
+// It adds missing IPs and removes extra IPs (only if they are A/AAAA records).
+// It returns the number of additions and deletions performed.
+func (c *Client) SyncDNS(ctx context.Context, desiredIPs []string) (int, int, error) {
+	// 1. Get current records
+	records, err := c.GetDNSRecords(ctx)
 	if err != nil {
-		return err
+		return 0, 0, fmt.Errorf("getting current records: %w", err)
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	currentMap := make(map[string]DNSRecord)
+	for _, r := range records {
+		currentMap[r.Content] = r
+	}
 
-	for _, origin := range pool.Origins {
-		weight := int(origin.Weight * 100)
-		if !origin.Enabled {
-			weight = 0
+	desiredMap := make(map[string]bool)
+	for _, ip := range desiredIPs {
+		desiredMap[ip] = true
+	}
+
+	added := 0
+	deleted := 0
+
+	// 2. Add missing IPs
+	for _, ip := range desiredIPs {
+		if _, exists := currentMap[ip]; !exists {
+			if err := c.CreateDNSRecord(ctx, ip); err != nil {
+				return added, deleted, fmt.Errorf("creating record for %s: %w", ip, err)
+			}
+			added++
 		}
-		c.originWeights[origin.Address] = weight
 	}
 
-	return nil
+	// 3. Remove extra IPs
+	// CAUTION: This removes ANY A/AAAA record for this name that isn't in desiredIPs.
+	// We should be careful to only remove IPs that we know about (i.e. those in our config but marked unusable)
+	// However, for pure LB, we typically want the DNS to reflect EXACTLY the state.
+	// To be safe, let's assume if it is in the DNS but not in desired, it should be removed.
+	for ip, record := range currentMap {
+		if !desiredMap[ip] {
+			if err := c.DeleteDNSRecord(ctx, record.ID); err != nil {
+				return added, deleted, fmt.Errorf("deleting record for %s: %w", ip, err)
+			}
+			deleted++
+		}
+	}
+
+	return added, deleted, nil
 }

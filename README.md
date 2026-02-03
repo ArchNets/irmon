@@ -107,7 +107,8 @@ scoring:
 cloudflare:
   api_token: "${CF_API_TOKEN}"
   account_id: "${CF_ACCOUNT_ID}"
-  pool_id: "${CF_POOL_ID}"
+  zone_id: "${CF_ZONE_ID}"
+  dns_name: "${CF_DNS_NAME}"
   rate_limit: 5
   ttl: 30
 
@@ -255,7 +256,8 @@ sudo systemctl enable --now irmon-agent
 | --------------- | ----------- | --------------------- |
 | `CF_API_TOKEN`  | irmon       | Cloudflare API token  |
 | `CF_ACCOUNT_ID` | irmon       | Cloudflare account ID |
-| `CF_POOL_ID`    | irmon       | Cloudflare pool ID    |
+| `CF_ZONE_ID`    | irmon       | Cloudflare zone ID    |
+| `CF_DNS_NAME`   | irmon       | DNS name to update    |
 | `LISTEN_ADDR`   | irmon-agent | Address to listen on  |
 
 ---

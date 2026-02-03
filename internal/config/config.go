@@ -21,8 +21,8 @@ type Config struct {
 // ServerConfig represents a server to monitor
 type ServerConfig struct {
 	Name      string           `yaml:"name"`
-	OriginIP  string           `yaml:"origin_ip"`  // Public IP for Cloudflare
-	TunnelIP  string           `yaml:"tunnel_ip"`  // Overlay tunnel IP
+	OriginIP  string           `yaml:"origin_ip"` // Public IP for Cloudflare
+	TunnelIP  string           `yaml:"tunnel_ip"` // Overlay tunnel IP
 	Protocols []ProtocolConfig `yaml:"protocols"`
 }
 
@@ -37,15 +37,16 @@ type ProtocolConfig struct {
 type CloudflareConfig struct {
 	APIToken  string `yaml:"api_token"`
 	AccountID string `yaml:"account_id"`
-	PoolID    string `yaml:"pool_id"`
+	ZoneID    string `yaml:"zone_id"`
+	DNSName   string `yaml:"dns_name"`   // e.g. vpn.example.com
 	RateLimit int    `yaml:"rate_limit"` // requests per second
 	TTL       int    `yaml:"ttl"`        // DNS TTL in seconds
 }
 
 // ScoringConfig represents scoring weights and thresholds
 type ScoringConfig struct {
-	Weights    map[string]int    `yaml:"weights"`
-	Thresholds ThresholdConfig   `yaml:"thresholds"`
+	Weights    map[string]int  `yaml:"weights"`
+	Thresholds ThresholdConfig `yaml:"thresholds"`
 }
 
 // ThresholdConfig represents state thresholds
@@ -172,8 +173,11 @@ func (c *Config) Validate() error {
 	if c.Cloudflare.APIToken == "" {
 		return fmt.Errorf("cloudflare.api_token is required")
 	}
-	if c.Cloudflare.PoolID == "" {
-		return fmt.Errorf("cloudflare.pool_id is required")
+	if c.Cloudflare.ZoneID == "" {
+		return fmt.Errorf("cloudflare.zone_id is required")
+	}
+	if c.Cloudflare.DNSName == "" {
+		return fmt.Errorf("cloudflare.dns_name is required")
 	}
 
 	return nil

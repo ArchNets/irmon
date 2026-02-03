@@ -50,8 +50,11 @@ cloudflare:
   # Cloudflare account ID
   account_id: "${CF_ACCOUNT_ID}"
 
-  # Load balancer pool ID to manage
-  pool_id: "${CF_POOL_ID}"
+  # Cloudflare zone ID
+  zone_id: "${CF_ZONE_ID}"
+
+  # DNS name to load balance (e.g., vpn.example.com)
+  dns_name: "${CF_DNS_NAME}"
 
   # Rate limit for API calls (requests per second)
   rate_limit: 5

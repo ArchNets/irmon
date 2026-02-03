@@ -58,10 +58,11 @@ var (
 		},
 		[]string{"server"},
 	)
+	// serverWeight is now deprecated for DNS LB but kept as "0 or 100" for visualization
 	serverWeight = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "irmon_server_weight",
-			Help: "Current Cloudflare weight for each server",
+			Name: "irmon_dns_enabled",
+			Help: "Whether the server is enabled in DNS (0=disabled, 100=enabled)",
 		},
 		[]string{"server"},
 	)
@@ -563,7 +564,8 @@ scoring:
 cloudflare:
   api_token: "${CF_API_TOKEN}"
   account_id: "${CF_ACCOUNT_ID}"
-  pool_id: "${CF_POOL_ID}"
+  zone_id: "${CF_ZONE_ID}"
+  dns_name: "${CF_DNS_NAME}"
   rate_limit: 5
   ttl: 30
 
@@ -593,7 +595,8 @@ func createDefaultEnv() {
 	envContent := `# Cloudflare credentials
 CF_API_TOKEN=your-api-token-here
 CF_ACCOUNT_ID=your-account-id-here
-CF_POOL_ID=your-pool-id-here
+CF_ZONE_ID=your-zone-id-here
+CF_DNS_NAME=vpn.example.com
 `
 	os.WriteFile(envFile, []byte(envContent), 0600)
 }
@@ -672,13 +675,15 @@ func runDaemon() {
 	cfClient := cloudflare.NewClient(cloudflare.Config{
 		APIToken:  cfg.Cloudflare.APIToken,
 		AccountID: cfg.Cloudflare.AccountID,
-		PoolID:    cfg.Cloudflare.PoolID,
+		ZoneID:    cfg.Cloudflare.ZoneID,
+		DNSName:   cfg.Cloudflare.DNSName,
 		RateLimit: cfg.Cloudflare.RateLimit,
+		TTL:       cfg.Cloudflare.TTL,
 	})
 
-	// Refresh Cloudflare cache on startup
-	if err := cfClient.RefreshCache(ctx); err != nil {
-		slog.Warn("failed to refresh Cloudflare cache", "error", err)
+	// Verify DNS access on startup
+	if _, err := cfClient.GetDNSRecords(ctx); err != nil {
+		slog.Warn("failed to access Cloudflare DNS", "error", err)
 	}
 
 	// Start metrics server if enabled
@@ -793,18 +798,28 @@ func runCheckCycle(
 
 	wg.Wait()
 
-	// Batch update Cloudflare
-	if len(weightUpdates) > 0 {
-		if err := cfClient.BatchUpdateOrigins(ctx, weightUpdates); err != nil {
-			slog.Error("failed to update Cloudflare", "error", err)
-		} else {
-			slog.Debug("updated Cloudflare weights", "count", len(weightUpdates))
+	// Sync DNS Records
+	// We only include servers with a non-zero weight (meaning they are usable)
+	var usableIPs []string
+	for ip, weight := range weightUpdates {
+		if weight > 0 {
+			usableIPs = append(usableIPs, ip)
 		}
 	}
 
-	cycleDuration := time.Since(cycleStart)
-	checkCycleTime.Observe(cycleDuration.Seconds())
-	slog.Debug("check cycle complete", "duration", cycleDuration)
+	if added, deleted, err := cfClient.SyncDNS(ctx, usableIPs); err != nil {
+		slog.Error("failed to sync DNS records", "error", err)
+	} else {
+		if added > 0 || deleted > 0 {
+			slog.Info("DNS records synced", "added", added, "deleted", deleted, "active_count", len(usableIPs))
+		} else {
+			// slog.Debug("DNS records already in sync", "active_count", len(usableIPs))
+		}
+	}
+
+	duration := time.Since(cycleStart).Seconds()
+	checkCycleTime.Observe(duration)
+	slog.Debug("check cycle complete", "duration", duration)
 }
 
 // checkServer runs all configured protocol checks for a server

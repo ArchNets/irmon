@@ -87,7 +87,8 @@ scoring:
 cloudflare:
   api_token: "${CF_API_TOKEN}"
   account_id: "${CF_ACCOUNT_ID}"
-  pool_id: "${CF_POOL_ID}"
+  zone_id: "${CF_ZONE_ID}"
+  dns_name: "${CF_DNS_NAME}"
   rate_limit: 5
   ttl: 30
 
@@ -126,7 +127,8 @@ if [ ! -f "${CONFIG_DIR}/env" ]; then
 # Cloudflare credentials
 CF_API_TOKEN=your-api-token-here
 CF_ACCOUNT_ID=your-account-id-here
-CF_POOL_ID=your-pool-id-here
+CF_ZONE_ID=your-zone-id-here
+CF_DNS_NAME=vpn.example.com
 EOF
     chmod 600 "${CONFIG_DIR}/env"
     warn "Please edit ${CONFIG_DIR}/env with your Cloudflare credentials!"
