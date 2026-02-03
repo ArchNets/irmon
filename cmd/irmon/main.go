@@ -18,11 +18,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/archnet/irmon/internal/bandwidth"
 	"github.com/archnet/irmon/internal/checker"
 	"github.com/archnet/irmon/internal/cloudflare"
 	"github.com/archnet/irmon/internal/config"
 	"github.com/archnet/irmon/internal/scoring"
 	"github.com/archnet/irmon/internal/state"
+	"github.com/archnet/irmon/internal/storage"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -87,6 +89,34 @@ var (
 			Buckets: prometheus.DefBuckets,
 		},
 	)
+	serverBandwidthRxBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "irmon_server_bandwidth_rx_bytes",
+			Help: "Total received bytes for each server",
+		},
+		[]string{"server"},
+	)
+	serverBandwidthTxBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "irmon_server_bandwidth_tx_bytes",
+			Help: "Total transmitted bytes for each server",
+		},
+		[]string{"server"},
+	)
+	serverBandwidthRxSpeed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "irmon_server_bandwidth_rx_bytes_per_sec",
+			Help: "Receive speed in bytes per second for each server",
+		},
+		[]string{"server"},
+	)
+	serverBandwidthTxSpeed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "irmon_server_bandwidth_tx_bytes_per_sec",
+			Help: "Transmit speed in bytes per second for each server",
+		},
+		[]string{"server"},
+	)
 )
 
 func init() {
@@ -96,6 +126,10 @@ func init() {
 	prometheus.MustRegister(protocolCheck)
 	prometheus.MustRegister(protocolRTT)
 	prometheus.MustRegister(checkCycleTime)
+	prometheus.MustRegister(serverBandwidthRxBytes)
+	prometheus.MustRegister(serverBandwidthTxBytes)
+	prometheus.MustRegister(serverBandwidthRxSpeed)
+	prometheus.MustRegister(serverBandwidthTxSpeed)
 }
 
 func main() {
@@ -686,9 +720,31 @@ func runDaemon() {
 		slog.Warn("failed to access Cloudflare DNS", "error", err)
 	}
 
+	// Initialize bandwidth database if enabled
+	var bandwidthDB *storage.BandwidthDB
+	if cfg.Bandwidth.Enabled && cfg.Bandwidth.DatabasePath != "" {
+		bandwidthDB, err = storage.NewBandwidthDB(cfg.Bandwidth.DatabasePath)
+		if err != nil {
+			slog.Error("failed to initialize bandwidth database", "error", err)
+		} else {
+			defer bandwidthDB.Close()
+			slog.Info("bandwidth database initialized", "path", cfg.Bandwidth.DatabasePath)
+
+			// Start cleanup routine if retention is configured
+			if cfg.Bandwidth.RetentionDays > 0 {
+				go runBandwidthCleanup(ctx, bandwidthDB, cfg.Bandwidth.RetentionDays)
+			}
+		}
+	}
+
 	// Start metrics server if enabled
 	if cfg.Metrics.Enabled {
-		go startMetricsServer(cfg.Metrics.Address, cfg.Metrics.Path)
+		go startMetricsServer(cfg.Metrics.Address, cfg.Metrics.Path, cfg.Bandwidth.Interface)
+	}
+
+	// Start bandwidth monitoring if enabled
+	if cfg.Bandwidth.Enabled {
+		go runBandwidthLoop(ctx, cfg, stateManager, bandwidthDB)
 	}
 
 	// Start health check loop
@@ -920,7 +976,7 @@ func updateMetrics(serverName string, result scoring.ScoreResult, weight int) {
 }
 
 // startMetricsServer starts the Prometheus metrics HTTP server
-func startMetricsServer(address, path string) {
+func startMetricsServer(address, path, bandwidthInterface string) {
 	mux := http.NewServeMux()
 	mux.Handle(path, promhttp.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -928,6 +984,10 @@ func startMetricsServer(address, path string) {
 		w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/status", statusHandler)
+
+	// Add bandwidth endpoint for agent mode
+	collector := bandwidth.NewCollector(bandwidthInterface)
+	mux.HandleFunc("/bandwidth", handleBandwidthMetrics(collector))
 
 	slog.Info("starting metrics server", "address", address, "path", path)
 	if err := http.ListenAndServe(address, mux); err != nil {
@@ -939,4 +999,187 @@ func startMetricsServer(address, path string) {
 func statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "running"})
+}
+
+// runBandwidthLoop periodically collects bandwidth stats from agents
+func runBandwidthLoop(
+	ctx context.Context,
+	cfg *config.Config,
+	stateManager *state.Manager,
+	bandwidthDB *storage.BandwidthDB,
+) {
+	if !cfg.Bandwidth.Enabled {
+		slog.Info("bandwidth monitoring disabled")
+		return
+	}
+
+	collector := bandwidth.NewCollector(cfg.Bandwidth.Interface)
+	ticker := time.NewTicker(cfg.Bandwidth.Interval)
+	defer ticker.Stop()
+
+	// Collect immediately on start
+	collectBandwidthStats(ctx, cfg, stateManager, collector, bandwidthDB)
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("bandwidth loop stopped")
+			return
+		case <-ticker.C:
+			collectBandwidthStats(ctx, cfg, stateManager, collector, bandwidthDB)
+		}
+	}
+}
+
+// collectBandwidthStats collects bandwidth statistics from local interface or remote agents
+func collectBandwidthStats(
+	ctx context.Context,
+	cfg *config.Config,
+	stateManager *state.Manager,
+	collector *bandwidth.Collector,
+	bandwidthDB *storage.BandwidthDB,
+) {
+	// Collect local stats
+	stats, err := collector.Collect()
+	if err != nil {
+		slog.Debug("failed to collect bandwidth stats", "error", err)
+		return
+	}
+
+	// For each server, collect bandwidth from agent endpoint if configured
+	for _, server := range cfg.Servers {
+		if server.AgentEndpoint != "" {
+			// Fetch from agent HTTP endpoint
+			fetchAgentBandwidth(ctx, server, stateManager, bandwidthDB)
+		} else {
+			// Use local stats (for servers on same machine)
+			if localStats, ok := stats[cfg.Bandwidth.Interface]; ok {
+				stateManager.UpdateBandwidth(
+					server.Name,
+					localStats.RxBytes,
+					localStats.TxBytes,
+					localStats.RxBytesPerSec,
+					localStats.TxBytesPerSec,
+				)
+				updateBandwidthMetrics(server.Name, localStats.RxBytes, localStats.TxBytes,
+					localStats.RxBytesPerSec, localStats.TxBytesPerSec)
+
+				// Persist to database
+				if bandwidthDB != nil {
+					persistBandwidth(bandwidthDB, server.Name, localStats.RxBytes, localStats.TxBytes,
+						localStats.RxBytesPerSec, localStats.TxBytesPerSec)
+				}
+			}
+		}
+	}
+}
+
+// fetchAgentBandwidth fetches bandwidth stats from agent HTTP endpoint
+func fetchAgentBandwidth(ctx context.Context, server config.ServerConfig, stateManager *state.Manager, bandwidthDB *storage.BandwidthDB) {
+	url := fmt.Sprintf("%s/bandwidth", server.AgentEndpoint)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		slog.Debug("failed to create request", "server", server.Name, "error", err)
+		return
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Debug("failed to fetch bandwidth", "server", server.Name, "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var stats bandwidth.InterfaceStats
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		slog.Debug("failed to decode bandwidth response", "server", server.Name, "error", err)
+		return
+	}
+
+	stateManager.UpdateBandwidth(
+		server.Name,
+		stats.RxBytes,
+		stats.TxBytes,
+		stats.RxBytesPerSec,
+		stats.TxBytesPerSec,
+	)
+
+	updateBandwidthMetrics(server.Name, stats.RxBytes, stats.TxBytes,
+		stats.RxBytesPerSec, stats.TxBytesPerSec)
+
+	// Persist to database
+	if bandwidthDB != nil {
+		persistBandwidth(bandwidthDB, server.Name, stats.RxBytes, stats.TxBytes,
+			stats.RxBytesPerSec, stats.TxBytesPerSec)
+	}
+}
+
+// updateBandwidthMetrics updates Prometheus bandwidth metrics
+func updateBandwidthMetrics(serverName string, rxBytes, txBytes, rxSpeed, txSpeed uint64) {
+	serverBandwidthRxBytes.WithLabelValues(serverName).Set(float64(rxBytes))
+	serverBandwidthTxBytes.WithLabelValues(serverName).Set(float64(txBytes))
+	serverBandwidthRxSpeed.WithLabelValues(serverName).Set(float64(rxSpeed))
+	serverBandwidthTxSpeed.WithLabelValues(serverName).Set(float64(txSpeed))
+}
+
+// handleBandwidthMetrics is an HTTP handler that returns current bandwidth stats
+// This can be used by agents to expose their bandwidth data
+func handleBandwidthMetrics(collector *bandwidth.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats, err := collector.CollectInterface("")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
+	}
+}
+
+// persistBandwidth saves bandwidth data to SQLite database
+func persistBandwidth(db *storage.BandwidthDB, serverName string, rxBytes, txBytes, rxSpeed, txSpeed uint64) {
+	record := storage.BandwidthRecord{
+		ServerName:    serverName,
+		Timestamp:     time.Now(),
+		RxBytes:       rxBytes,
+		TxBytes:       txBytes,
+		RxBytesPerSec: rxSpeed,
+		TxBytesPerSec: txSpeed,
+	}
+
+	if err := db.Insert(record); err != nil {
+		slog.Debug("failed to persist bandwidth", "server", serverName, "error", err)
+	}
+}
+
+// runBandwidthCleanup periodically removes old bandwidth data
+func runBandwidthCleanup(ctx context.Context, db *storage.BandwidthDB, retentionDays int) {
+	ticker := time.NewTicker(24 * time.Hour) // Run daily
+	defer ticker.Stop()
+
+	cleanupData := func() {
+		retention := time.Duration(retentionDays) * 24 * time.Hour
+		count, err := db.CleanupOld(retention)
+		if err != nil {
+			slog.Error("failed to cleanup old bandwidth data", "error", err)
+		} else if count > 0 {
+			slog.Info("cleaned up old bandwidth data", "records_deleted", count, "retention_days", retentionDays)
+		}
+	}
+
+	// Run cleanup immediately on start
+	cleanupData()
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("bandwidth cleanup stopped")
+			return
+		case <-ticker.C:
+			cleanupData()
+		}
+	}
 }

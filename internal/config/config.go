@@ -16,14 +16,16 @@ type Config struct {
 	CheckConfig CheckConfig      `yaml:"check_config"`
 	Logging     LoggingConfig    `yaml:"logging"`
 	Metrics     MetricsConfig    `yaml:"metrics"`
+	Bandwidth   BandwidthConfig  `yaml:"bandwidth"`
 }
 
 // ServerConfig represents a server to monitor
 type ServerConfig struct {
-	Name      string           `yaml:"name"`
-	OriginIP  string           `yaml:"origin_ip"` // Public IP for Cloudflare
-	TunnelIP  string           `yaml:"tunnel_ip"` // Overlay tunnel IP
-	Protocols []ProtocolConfig `yaml:"protocols"`
+	Name          string           `yaml:"name"`
+	OriginIP      string           `yaml:"origin_ip"`      // Public IP for Cloudflare
+	TunnelIP      string           `yaml:"tunnel_ip"`      // Overlay tunnel IP
+	AgentEndpoint string           `yaml:"agent_endpoint"` // Agent HTTP endpoint for bandwidth metrics
+	Protocols     []ProtocolConfig `yaml:"protocols"`
 }
 
 // ProtocolConfig represents a protocol check configuration
@@ -78,6 +80,16 @@ type MetricsConfig struct {
 	Path    string `yaml:"path"`    // e.g., /metrics
 }
 
+// BandwidthConfig represents bandwidth monitoring configuration
+type BandwidthConfig struct {
+	Enabled       bool          `yaml:"enabled"`        // Enable bandwidth monitoring
+	Interval      time.Duration `yaml:"interval"`       // How often to collect bandwidth stats
+	Interface     string        `yaml:"interface"`      // Specific interface to monitor (empty = auto-detect)
+	AgentPort     int           `yaml:"agent_port"`     // Port for agent bandwidth metrics endpoint
+	DatabasePath  string        `yaml:"database_path"`  // Path to SQLite database file
+	RetentionDays int           `yaml:"retention_days"` // How many days to keep history (0 = forever)
+}
+
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
@@ -115,6 +127,14 @@ func DefaultConfig() *Config {
 			Enabled: true,
 			Address: ":9090",
 			Path:    "/metrics",
+		},
+		Bandwidth: BandwidthConfig{
+			Enabled:       true,
+			Interval:      10 * time.Second,
+			Interface:     "", // Auto-detect
+			AgentPort:     9091,
+			DatabasePath:  "/var/lib/irmon/bandwidth.db",
+			RetentionDays: 30, // Keep 30 days of history
 		},
 	}
 }

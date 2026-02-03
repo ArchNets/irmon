@@ -26,6 +26,13 @@ type ServerInfo struct {
 	LastStateChange       time.Time           `json:"last_state_change"`
 	LastCheck             time.Time           `json:"last_check"`
 	History               []ScoreEntry        `json:"history"`
+
+	// Bandwidth metrics
+	BandwidthRxBytes       uint64    `json:"bandwidth_rx_bytes"`
+	BandwidthTxBytes       uint64    `json:"bandwidth_tx_bytes"`
+	BandwidthRxBytesPerSec uint64    `json:"bandwidth_rx_bytes_per_sec"`
+	BandwidthTxBytesPerSec uint64    `json:"bandwidth_tx_bytes_per_sec"`
+	LastBandwidthUpdate    time.Time `json:"last_bandwidth_update"`
 }
 
 // Manager manages server state with hysteresis and history
@@ -291,4 +298,21 @@ func (m *Manager) RecentTrend(serverName string, sampleSize int) int {
 	secondAvg := secondHalf / (len(history) - mid)
 
 	return secondAvg - firstAvg
+}
+
+// UpdateBandwidth updates the bandwidth metrics for a server
+func (m *Manager) UpdateBandwidth(serverName string, rxBytes, txBytes, rxBytesPerSec, txBytesPerSec uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	server, exists := m.servers[serverName]
+	if !exists {
+		return
+	}
+
+	server.BandwidthRxBytes = rxBytes
+	server.BandwidthTxBytes = txBytes
+	server.BandwidthRxBytesPerSec = rxBytesPerSec
+	server.BandwidthTxBytesPerSec = txBytesPerSec
+	server.LastBandwidthUpdate = time.Now()
 }

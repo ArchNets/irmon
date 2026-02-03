@@ -59,8 +59,8 @@ cloudflare:
   # Rate limit for API calls (requests per second)
   rate_limit: 5
 
-  # DNS TTL in seconds (lower = faster failover)
-  ttl: 30
+  # DNS TTL in seconds (lower = faster failover, minimum 60 per Cloudflare API)
+  ttl: 60
 
 #==============================================================================
 # Server Configuration
@@ -72,6 +72,8 @@ servers:
     origin_ip: "185.1.2.3"
     # Overlay tunnel IP (optional, for internal tracking)
     tunnel_ip: "40.1.1.1"
+    # Agent endpoint for bandwidth monitoring (optional)
+    agent_endpoint: "http://40.1.1.1:9091"
 
     protocols:
       # WSSMUX - CRITICAL priority
@@ -108,6 +110,7 @@ servers:
   - name: "iran-server-2"
     origin_ip: "185.4.5.6"
     tunnel_ip: "40.1.2.1"
+    agent_endpoint: "http://40.1.2.1:9091"
 
     protocols:
       - type: wssmux
@@ -159,3 +162,28 @@ metrics:
 
   # Path for metrics endpoint
   path: /metrics
+
+#==============================================================================
+# Bandwidth Monitoring Configuration
+#==============================================================================
+bandwidth:
+  # Enable bandwidth monitoring
+  enabled: true
+
+  # How often to collect bandwidth statistics
+  interval: 10s
+
+  # Network interface to monitor (leave empty for auto-detect primary interface)
+  # Common interfaces: wg0 (WireGuard), eth0, ens3, etc.
+  interface: ""
+
+  # Port for agent bandwidth metrics endpoint
+  # Each agent will expose bandwidth stats at http://agent-ip:agent_port/bandwidth
+  agent_port: 9091
+
+  # SQLite database path for storing bandwidth history
+  database_path: "/var/lib/irmon/bandwidth.db"
+
+  # How many days to keep bandwidth history (0 = keep forever)
+  # Cleanup runs daily to remove old records
+  retention_days: 30
